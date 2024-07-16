@@ -1,35 +1,31 @@
+import json
 import os
 import sys
 
+from PyQt5 import QtWidgets
 
-from detectron2.config import get_cfg
-from detectron2.engine import DefaultPredictor
-from detectron2 import model_zoo
-
-from PyQt5 import QtGui, QtCore,QtWidgets
-
-from PyQt5.QtWidgets import QRubberBand, QLabel, QApplication, QWidget, QMainWindow, QMenu, QAction, QFileDialog, QHBoxLayout, QPushButton
+from PyQt5.QtWidgets import QLabel, QApplication, QWidget, QMainWindow, QMenu, QAction, QFileDialog, QHBoxLayout, QPushButton
 from PyQt5.QtWidgets import QVBoxLayout, QComboBox
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import QRect
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
-from ultralytics import YOLO
 import numpy as np
-from asbestutills.plotter.plotting import plot_bboxs, plot_obounding_box
 import qimage2ndarray
 import cv2
-from utills import qimage2array
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from pathlib import Path
 from model import Model
-from utills import  prediction_to_detection, collect_max_size_from_detection
+from utills.utills import  prediction_to_detection, collect_max_size_from_detection, qimage2array
 import supervision as sv
-import ultralytics
 import time
+from utills._path import list_images
+
+from pycocotools.coco import COCO
+
 GEOMETRY_SIZE = (720,720)
 
 PATH2MODELS = Path("./models/")
+from parzen.statistic import collect_segmentation_maxsize
 class Window(QMainWindow):
     def __init__(self, parent=None):
         super().__init__()
@@ -122,6 +118,7 @@ class Window(QMainWindow):
         # Creating menus using a QMenu object
         fileMenu = QMenu("&File", self)
         fileMenu.addAction(self.newAction)
+        fileMenu.addAction(self.opendatasetAction)
         fileMenu.addAction(self.openAction)
         fileMenu.addAction(self.saveAction)
         fileMenu.addAction(self.exitAction)
@@ -144,6 +141,7 @@ class Window(QMainWindow):
         self.copyAction = QAction("&Copy", self)
         self.pasteAction = QAction("&Paste", self)
         self.predictAction = QAction("&Predict", self)
+        self.opendatasetAction = QAction("&Open dataset", self)
 
         self.cutAction = QAction("C&ut", self)
         self.helpContentAction = QAction("&Help Content", self)
@@ -152,7 +150,7 @@ class Window(QMainWindow):
         self.openAction.triggered.connect(self.open_file)
         self.saveAction.triggered.connect(self.save_image)
         self.predictAction.triggered.connect(self.predict)
-
+        self.opendatasetAction.triggered.connect(self.load_dataset)
 
     def open_file(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Open file")
@@ -316,6 +314,47 @@ class Window(QMainWindow):
         img = qimage2array(qimage)
         img = img.astype(np.uint8)
         cv2.imwrite('save_image.jpeg', img)
+
+    def load_dataset(self):
+        fname = QFileDialog.getExistingDirectory(self, "Open directory with dataset")
+        self.image_index = 0
+        self.path2data = Path(fname)
+        f_coco = list(Path(fname).rglob("*.json"))
+        self.coco_set = COCO(str(f_coco[0]))
+        if len(f_coco) == 1:
+            with open(f_coco[0]) as file:
+                self.dataset = json.load(file)
+            self.f_images = list_images(fname)
+            self.f_coco = f_coco[0]
+            self.set_image(str(self.f_images[0]))
+            r = collect_segmentation_maxsize(f_coco[0],[str(self.f_images[0].stem)])
+            print(self.f_images)
+            print(r)
+            self.draw_hist(r,[])
+    def set_image(self, fname):
+        pixmap = QPixmap(fname)
+        pixmap = pixmap.scaled(*GEOMETRY_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.h_layout.itemAt(0).widget().setPixmap(pixmap)
+        print(self.h_layout.itemAt(0).widget().size() / 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.source_pixmap = pixmap.copy()
+
+    def keyPressEvent(self, event):
+        # Проверяем, какая клавиша была нажата
+        if event.key() == Qt.Key_Left:
+            # Переключаемся на предыдущее изображение
+            self.image_index = (self.image_index - 1) % len(self.f_images)
+            self.set_image(str(self.f_images[self.image_index]))
+
+            r = collect_segmentation_maxsize(self.coco_set, [str(self.f_images[self.image_index].stem)])
+            self.draw_hist(r, [])
+
+        elif event.key() == Qt.Key_Right:
+            # Переключаемся на следующее изображение
+            self.image_index = (self.image_index + 1) % len(self.f_images)
+            self.set_image(str(self.f_images[self.image_index]))
+
+            r = collect_segmentation_maxsize(self.coco_set, [str(self.f_images[self.image_index].stem)])
+            self.draw_hist(r, [])
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = Window()
